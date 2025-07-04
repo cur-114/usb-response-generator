@@ -361,3 +361,5 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+/usb-response-generator/usb_packet_data.coe
+/usb-response-generator/usb_packet_map.coe

@@ -13,7 +13,6 @@
 #define MAX_MAP_ENTRIES 128
 #define MAX_DATA_BRAM 4096
 
-std::string pcap_capture_file = "D:\\dev\\archives\\arcade-controller-2.pcap";
 std::string file_data_coe = "usb_packet_data.coe";
 std::string file_map_coe = "usb_packet_map.coe";
 
@@ -71,10 +70,11 @@ static void new_entry(
 		if (entry.map_entry->b_request != b_request) continue;
 		if (entry.map_entry->w_value != w_value) continue;
 		if (entry.map_entry->w_index != w_index) continue;
-		if (entry.map_entry->data_length >= data_length) continue;
-		printf("data update %d -> %d!\n", entry.map_entry->data_length, data_length);
-		entry.data = pointer;
-		entry.map_entry->data_length = data_length;
+		if (entry.map_entry->data_length <= data_length) {
+			//printf("data update %d -> %d!\n", entry.map_entry->data_length, data_length);
+			entry.data = pointer;
+			entry.map_entry->data_length = data_length;
+		}
 		return;
 	}
 
@@ -137,6 +137,9 @@ void write_map_coe() {
 	ofs << std::uppercase << std::hex << std::setfill('0');
 
 	for (int i = 0; i < sizeof(map_entries) / 12; i++) {
+		usb_packet_map_entry entry = map_entries[i];
+
+		printf("%02X %02X %04x %04X: %d\n", entry.bm_request_type, entry.b_request, entry.w_value, entry.w_index, entry.data_length);
 		uint32_t* data_0 = ((uint32_t*)map_entries) + i * 3;
 		uint32_t* data_1 = data_0 + 1;
 		uint32_t* data_2 = data_0 + 2;
@@ -190,7 +193,7 @@ struct usbmon_packet {
 void init_device_map() {
 	device_map dev_map = {};
 	dev_map.bus_num = 1;
-	dev_map.dev_num = 4;
+	dev_map.dev_num = 3;
 	dev_map.slot_id = 1;
 	devices.push_back(dev_map);
 }
@@ -198,9 +201,9 @@ void init_device_map() {
 std::map<uint64_t, usbmon_packet> pending_setups;
 
 
-void load_pcap() {
+void load_pcap(std::string file) {
 	char errbuf[PCAP_ERRBUF_SIZE];
-	pcap_t* handle = pcap_open_offline(pcap_capture_file.c_str(), errbuf);
+	pcap_t* handle = pcap_open_offline(file.c_str(), errbuf);
 
 	if (handle == NULL) {
 		std::cerr << errbuf << std::endl;
@@ -222,28 +225,31 @@ void load_pcap() {
 
 		//Ctrl Packet + Submit
 		if (packet->xfer_type == 2 && packet->type == 'S') {
-			printf("SUBMIT  : packet: %llX %d.%d.%d\n", packet->id, packet->busnum, packet->devnum, packet->epnum & 0xF);
+			//printf("SUBMIT  : packet: %llX %d.%d.%d\n", packet->id, packet->busnum, packet->devnum, packet->epnum & 0xF);
 			pending_setups[packet->id] = *packet;
 		}
 		if (packet->xfer_type == 2 && packet->type == 'C') {
-			printf("COMPLETE: packet: %llX %d.%d.%d\n", packet->id, packet->busnum, packet->devnum, packet->epnum & 0xF);
+			//printf("COMPLETE: packet: %llX %d.%d.%d\n", packet->id, packet->busnum, packet->devnum, packet->epnum & 0xF);
 			setup_t setup = pending_setups[packet->id].s.setup;
-			printf(" %02X %02X %04X %04X %d\n", setup.bm_request_type, setup.b_request, setup.w_index, setup.w_value, setup.w_length);
+			int ep_id = (packet->epnum & 0xF) + 1;
+			printf(" %d:%d %02X %02X %04X %04X %d\n", match_dev->slot_id, ep_id, setup.bm_request_type, setup.b_request, setup.w_index, setup.w_value, setup.w_length);
 			void* payload = (void*)((uint64_t)packet + sizeof(*packet));
+			int data_length = packet->length;
 
 			void* buffer = 0;
-			if (setup.w_length != 0) {
-				buffer = malloc(setup.w_length);
+			if (data_length != 0) {
+				buffer = malloc(data_length);
 				if (!buffer) {
 					printf("failed to allocate buffer!\n");
 					return;
 				}
-				memcpy(buffer, payload, setup.w_length);
+				memcpy(buffer, payload, data_length);
 			}
 
-			new_entry(match_dev->slot_id, packet->epnum & 0xF, setup.bm_request_type, setup.b_request, setup.w_value, setup.w_index, setup.w_length, 0, buffer);
+			new_entry(match_dev->slot_id, ep_id, setup.bm_request_type, setup.b_request, setup.w_value, setup.w_index, data_length, 0, buffer);
 		}
 	}
+	pcap_close(handle);
 }
 
 void init_bram_data() {
@@ -292,7 +298,10 @@ int main()
 {
 	init_device_map();
 	//load_entries();
-	load_pcap();
+	load_pcap("D:\\dev\\archives\\arcade-controller-win.pcap");
+	//load_pcap("D:\\dev\\archives\\arcade-controller-2.pcap");
+	//load_pcap("D:\\dev\\archives\\arcade-controller-linux.pcap");
+	//load_pcap("D:\\dev\\archives\\arcade-controller-linux-desc.pcap");
 
 	init_bram_data();
 
